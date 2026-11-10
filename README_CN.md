@@ -32,14 +32,14 @@
 <dependency>
     <groupId>org.zvec</groupId>
     <artifactId>zvec-java</artifactId>
-    <version>0.8.0</version>
+    <version>0.8.1</version>
 </dependency>
 ```
 
 **Gradle**
 
 ```groovy
-implementation 'org.zvec:zvec-java:0.8.0'
+implementation 'org.zvec:zvec-java:0.8.1'
 ```
 
 `org.bytedeco:javacpp` 会作为传递依赖自动引入,无需自己声明。运行环境要求 Java 8 及以上。
@@ -48,7 +48,7 @@ implementation 'org.zvec:zvec-java:0.8.0'
 
 ### 选择哪个产物
 
-版本号跟随内置的 zvec 原生库版本:`0.8.0` 对应 zvec v0.8.0-beta2,`0.7.0` 对应 zvec v0.7.0。
+版本号跟随内置的 zvec 原生库版本:`0.8.1` 对应 zvec v0.8.1,`0.8.0` 对应 zvec v0.8.0-beta2,`0.7.0` 对应 zvec v0.7.0。
 
 | 产物 | 内容 | 适用场景 |
 |------|------|----------|
@@ -67,13 +67,13 @@ implementation 'org.zvec:zvec-java:0.8.0'
 <dependency>
     <groupId>org.zvec</groupId>
     <artifactId>zvec-java</artifactId>
-    <version>0.8.0</version>
+    <version>0.8.1</version>
     <classifier>linux-x86_64</classifier>
 </dependency>
 ```
 
 ```groovy
-implementation 'org.zvec:zvec-java:0.8.0:linux-x86_64'
+implementation 'org.zvec:zvec-java:0.8.1:linux-x86_64'
 ```
 
 受支持平台:macOS ARM64、macOS Intel(x86_64)、Linux x86_64、Linux ARM64、Windows x86_64、Windows ARM64。Linux 原生库在 `manylinux_2_28` 镜像中构建,要求 glibc 2.27 及以上,因此 Ubuntu 18.04+、Debian 10+、RHEL/CentOS 8+、Fedora 28+ 均可使用。两个 macOS 原生库从 0.8.0 起都以 11.0 为部署目标,即 macOS 11(Big Sur)及以上均可使用;**已发布的 0.7.0 macOS 原生库构建时没有指定部署目标,因此只能在 macOS 15 及以上加载。**
@@ -162,27 +162,23 @@ mvn test -Dzvec.home=/path/to/zvec
 
 ```bash
 mvn package -DskipTests
-java -jar target/zvec-java-0.8.1-SNAPSHOT-with-dependencies.jar
+java -jar target/zvec-java-0.8.1-with-dependencies.jar
 ```
-
-`0.8.1-SNAPSHOT` 是 `main` 在两次发布之间使用的版本号,指的是本地这份 checkout
-构建出来的 JAR 文件名 —— 它不在 Maven Central 上,也无法作为依赖解析。要引入依赖,
-请用[安装](#安装)小节里的已发布版本,那里的坐标永远不带 `-SNAPSHOT`。
 
 ### 对构建产物做冒烟测试
 
 `scripts/smoke-test.sh` 会按消费者的方式加载一个已构建好的 JAR 并完整跑一遍:
 JavaCPP 从 JAR 中解压出当前平台的原生库,然后真实地创建一个 collection、写入数据,
-并分别用向量检索和 jieba 全文检索查询。它只依赖 JDK —— 不需要 Docker、不需要
+并分别用向量检索、jieba 全文检索和分组向量检索查询。它只依赖 JDK —— 不需要 Docker、不需要
 Maven、也不需要 zvec 源码。
 
 ```bash
-scripts/smoke-test.sh --jar target/zvec-java-0.8.1-SNAPSHOT.jar
+scripts/smoke-test.sh --jar target/zvec-java-0.8.1.jar
 
 # 也可以从 Maven 目录布局中解析 JAR,例如发布前从 Central Portal 下载的
 # deployment bundle
-scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.0
-scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.0 --classifier linux-arm64
+scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.1
+scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.1 --classifier linux-arm64
 ```
 
 想证明产出的 `.so` 真的能在老发行版上加载,就要在 glibc 不高于文档所述下限的机器上

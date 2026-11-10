@@ -7,7 +7,8 @@ supported for as long as the corresponding zvec release is.
 
 | Version | Bundled zvec | Supported |
 |---------|--------------|-----------|
-| 0.8.x   | v0.8.0-beta2 | Yes       |
+| 0.8.1   | v0.8.1       | Yes       |
+| 0.8.0   | v0.8.0-beta2 | Yes       |
 | 0.7.x   | v0.7.0       | Yes       |
 | < 0.7.0 | —            | No (never published) |
 

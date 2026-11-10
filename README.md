@@ -35,14 +35,14 @@ configuration.
 <dependency>
     <groupId>org.zvec</groupId>
     <artifactId>zvec-java</artifactId>
-    <version>0.8.0</version>
+    <version>0.8.1</version>
 </dependency>
 ```
 
 **Gradle**
 
 ```groovy
-implementation 'org.zvec:zvec-java:0.8.0'
+implementation 'org.zvec:zvec-java:0.8.1'
 ```
 
 `org.bytedeco:javacpp` comes in transitively, so you do not need to declare it.
@@ -54,8 +54,8 @@ The public API lives in the `org.zvec.binding` package: `Zvec`, `Collection`,
 
 ### Picking an artifact
 
-The version tracks the bundled zvec native version: `0.8.0` ships zvec
-v0.8.0-beta2, `0.7.0` ships zvec v0.7.0.
+The version tracks the bundled zvec native version: `0.8.1` ships zvec
+v0.8.1, `0.8.0` ships zvec v0.8.0-beta2, `0.7.0` ships zvec v0.7.0.
 
 | Artifact | Contents | Pick it when |
 |----------|----------|--------------|
@@ -74,13 +74,13 @@ Single-platform classifiers:
 <dependency>
     <groupId>org.zvec</groupId>
     <artifactId>zvec-java</artifactId>
-    <version>0.8.0</version>
+    <version>0.8.1</version>
     <classifier>linux-x86_64</classifier>
 </dependency>
 ```
 
 ```groovy
-implementation 'org.zvec:zvec-java:0.8.0:linux-x86_64'
+implementation 'org.zvec:zvec-java:0.8.1:linux-x86_64'
 ```
 
 Supported platforms: macOS ARM64 and macOS Intel (x86_64), Linux x86_64, Linux
@@ -189,29 +189,24 @@ The packaged fat JAR **already embeds the native library for the current platfor
 
 ```bash
 mvn package -DskipTests
-java -jar target/zvec-java-0.8.1-SNAPSHOT-with-dependencies.jar
+java -jar target/zvec-java-0.8.1-with-dependencies.jar
 ```
-
-`0.8.1-SNAPSHOT` is the version `main` builds under between releases. It names
-the JAR this checkout produces — it is not on Maven Central and cannot be
-resolved as a dependency. For that, use the published version in the
-[Installation](#installation) snippets, which never carries `-SNAPSHOT`.
 
 ### Smoke-test a built artifact
 
 `scripts/smoke-test.sh` loads an already-built JAR the way a consumer does and
 exercises it end to end: JavaCPP unpacks this platform's natives out of the JAR,
-then a real collection is created, written to and queried by both vector search
-and jieba full-text search. It needs a JDK and nothing else — no Docker, no
-Maven, no zvec checkout.
+then a real collection is created, written to and queried by vector search,
+jieba full-text search and a grouped vector search. It needs a JDK and nothing
+else — no Docker, no Maven, no zvec checkout.
 
 ```bash
-scripts/smoke-test.sh --jar target/zvec-java-0.8.1-SNAPSHOT.jar
+scripts/smoke-test.sh --jar target/zvec-java-0.8.1.jar
 
 # Or resolve the JAR out of a Maven-layout directory, e.g. a Central Portal
 # deployment bundle downloaded before publishing it
-scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.0
-scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.0 --classifier linux-arm64
+scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.1
+scripts/smoke-test.sh --repo /tmp/central-staging --version 0.8.1 --classifier linux-arm64
 ```
 
 To prove the shipped `.so` files really load on an older distro, run it on a
