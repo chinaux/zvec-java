@@ -10,6 +10,45 @@ zvec `v0.7.0`. A binding-only fix bumps the third segment.
 Tracks zvec `v0.8.1` (`30d662d`); the artifact version is `0.8.1-SNAPSHOT`
 until the release is cut.
 
+### Added
+
+- `Collection.groupByQuery(GroupByVectorQuery)` and `GroupResult`, binding
+  `zvec_collection_group_by_query`, `zvec_group_result_t` and
+  `zvec_group_results_free`: a vector search whose nearest matches come back
+  bucketed by a scalar field — at most `groupCount` groups of at most
+  `topkPerGroup` documents each — instead of one flat list. The C result array
+  owns the grouping values, every group's document array and the documents
+  themselves, and `zvec_group_results_free` is the only function that releases
+  it, so the wrapper moves each document into a Java `Doc` and clears the
+  group's array before handing the shell back to the engine; without that the
+  free would destroy documents the caller still holds.
+  `CollectionQueryCoverageTest` gains six grouped-search tests — bucketing,
+  filter and `includeVector`, no-match, invalid arguments, and
+  `testGroupByQueryResultsOutliveTheCollection` for the ownership hand-over —
+  and `scripts/smoke-test/SmokeTest.java` runs a grouped query as well, which is
+  what exercises the struct-array marshalling through a published JAR on every
+  platform.
+- `QuantizeType.PQ` (8), `PqQuantizerParams` and `IndexParams.createIvfPq` /
+  `setQuantizerPq` / `getQuantizerPq`, binding
+  `zvec_index_params_set_quantizer_pq`, `zvec_index_params_get_quantizer_pq`,
+  `zvec_pq_quantizer_params_t` and `ZVEC_QUANTIZE_TYPE_PQ`: IVF product
+  quantization with PQ4/PQ8, FastScan and OPQ. `setQuantizerPq` also selects
+  `QuantizeType.PQ` — the C setter copies the chunk layout but leaves the
+  quantize type alone, and PQ settings stored on an index that does not quantize
+  with PQ are ignored silently, so a wrapper that did not set the type would
+  look correct and quietly do nothing. Like the C setter it is IVF-only; HNSW
+  can still quantize with PQ through
+  `createHNSWQuantized(.., QuantizeType.PQ)`, but only with the engine defaults.
+  `ZvecConfig` skips the `ZVEC_PQ_QUANTIZER_PARAMS_DEFAULT` macro, whose
+  brace-enclosed initializer list has no Java constant form and otherwise makes
+  the generated JNI glue fail to compile; the `PqQuantizerParams` no-argument
+  constructor carries the same values. `SchemaIndexConfigCoverageTest` gains six
+  parameter round-trip and rejection tests, `ApiCoverageTest` pins the enum
+  code, and both READMEs document the factory.
+- `BasicExample` step 7 runs a grouped search over the example collection and
+  step 12 configures IVF PQ and OPQ, so `mvn package && java -jar
+  target/zvec-java-*-with-dependencies.jar` demonstrates both.
+
 ### Changed
 
 - The `zvec` submodule moved from `v0.8.0-beta2` (`8397071`) to `v0.8.1`

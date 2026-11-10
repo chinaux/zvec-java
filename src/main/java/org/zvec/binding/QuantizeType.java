@@ -8,7 +8,12 @@ public enum QuantizeType {
     FP16(1),
     INT8(2),
     INT4(3),
-    RABITQ(4);
+    RABITQ(4),
+    /**
+     * Product quantization (zvec &ge; v0.8.1). Codes 5-7 are reserved by the
+     * C API, so PQ is 8 rather than the next free value.
+     */
+    PQ(8);
 
     private final int code;
 

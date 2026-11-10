@@ -79,6 +79,16 @@ class ApiCoverageTest extends TestSupport {
         assertEquals(QuantizeType.RABITQ, QuantizeType.fromCode(4));
     }
 
+    @Test
+    void testPqQuantizeTypeCode() {
+        // Added with zvec v0.8.1's IVF product quantization. The C API reserves
+        // 5-7, so PQ is 8 rather than the next free value.
+        assertEquals(8, QuantizeType.PQ.getCode());
+        assertEquals(QuantizeType.PQ, QuantizeType.fromCode(8));
+        assertEquals(QuantizeType.UNDEFINED, QuantizeType.fromCode(5),
+                "5 is reserved, not a quantize type");
+    }
+
 
     // =========================================================================
     // Index parameters

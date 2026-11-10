@@ -7,6 +7,7 @@ import org.zvec.binding.ZvecNative.zvec_collection_t;
 import org.zvec.binding.ZvecNative.zvec_doc_iterator_t;
 import org.zvec.binding.ZvecNative.zvec_doc_t;
 import org.zvec.binding.ZvecNative.zvec_field_schema_t;
+import org.zvec.binding.ZvecNative.zvec_group_result_t;
 import org.bytedeco.javacpp.Pointer;
 import org.bytedeco.javacpp.PointerPointer;
 import org.bytedeco.javacpp.SizeTPointer;
@@ -248,6 +249,32 @@ public class Collection implements AutoCloseable {
         return readDocArray(results, count);
     }
 
+    /**
+     * Execute a grouped vector query (zvec &ge; v0.8.1).
+     *
+     * <p>Instead of one flat list, the closest matches are bucketed by the
+     * value of the group-by field: at most {@code groupCount} groups come back,
+     * each holding at most {@code topkPerGroup} documents ordered by
+     * similarity. Use it to spread results over categories, for example a few
+     * documents per author rather than a page full of one author.
+     *
+     * <p>Each group owns its documents, which stay readable after the query and
+     * the collection are closed; release them with {@link GroupResult#close()}
+     * or {@link GroupResult#freeGroupResults(List)}. An empty list means no
+     * group matched, and a group-by field that is not in the schema throws a
+     * {@link ZvecException} with {@link ErrorCode#INVALID_ARGUMENT}.
+     */
+    public List<GroupResult> groupByQuery(GroupByVectorQuery query) {
+        if (query == null || query.getHandle() == null) {
+            throw new ZvecException(ErrorCode.INVALID_ARGUMENT, "group by query is null or closed");
+        }
+        PointerPointer results = new PointerPointer(1);
+        SizeTPointer count = new SizeTPointer(1);
+        ZvecException.throwIfError(ZvecNative.zvec_collection_group_by_query(
+                requireOpen(), query.getHandle(), results, count));
+        return readGroupResults(results, count);
+    }
+
     /** Fetch documents by primary key.  Returns a list of owned Docs; caller must free them. */
     public List<Doc> fetch(List<String> pks) {
         if (pks == null || pks.isEmpty()) return new ArrayList<>();
@@ -324,5 +351,57 @@ public class Collection implements AutoCloseable {
         // only free() can release.
         ZvecNative.zvec_free(arrRef);
         return result;
+    }
+
+    /**
+     * Convert a C group-result array into owned {@link GroupResult}s.
+     *
+     * <p>The array owns everything in it — the grouping values, each group's
+     * document array and the documents themselves — and
+     * {@code zvec_group_results_free} is the only way to release it. Ownership
+     * of every document therefore moves into a {@link Doc}, and each group's
+     * own document array is cleared before the shell is handed back to the
+     * engine, so nothing is destroyed twice.
+     */
+    private List<GroupResult> readGroupResults(PointerPointer arrRef, SizeTPointer countRef) {
+        long count = countRef.get();
+        List<GroupResult> groups = new ArrayList<>((int) count);
+        // Unlike the flat query, this out-parameter is not @ByPtrPtr: the array
+        // address was written into the first slot of arrRef.
+        Pointer arrayPtr = (arrRef == null || arrRef.isNull()) ? null : arrRef.get(0);
+        if (count == 0 || arrayPtr == null || arrayPtr.isNull()) {
+            return groups;
+        }
+        zvec_group_result_t array = new zvec_group_result_t(arrayPtr).capacity(count);
+        try {
+            for (long i = 0; i < count; i++) {
+                zvec_group_result_t group = array.position(i);
+                String groupByValue = NativeSupport.string(group.group_by_value());
+                long docCount = group.doc_count();
+                List<Doc> docs = new ArrayList<>((int) docCount);
+                PointerPointer docArray = group.docs();
+                if (docArray != null && !docArray.isNull()) {
+                    docArray.capacity(docCount);
+                    for (long j = 0; j < docCount; j++) {
+                        Pointer docPtr = docArray.get(j);
+                        if (docPtr != null && !docPtr.isNull()) {
+                            docs.add(new Doc(new zvec_doc_t(docPtr), true));
+                        }
+                    }
+                }
+                group.docs((PointerPointer) null);
+                group.doc_count(0L);
+                groups.add(new GroupResult(groupByValue, docs));
+            }
+        } catch (RuntimeException e) {
+            GroupResult.freeGroupResults(groups);
+            throw e;
+        } finally {
+            // position(i) left the array pointer on the last element; the free
+            // call expects the base of the array.
+            array.position(0);
+            ZvecNative.zvec_group_results_free(array, count);
+        }
+        return groups;
     }
 }

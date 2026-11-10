@@ -10,7 +10,8 @@ import java.util.Random;
 
 /**
  * Basic example demonstrating the Zvec Java binding: schema and index setup,
- * insert, vector search, fetch, update, delete and stats.
+ * insert, vector search, grouped search, fetch, update, delete, stats and the
+ * IVF product-quantization parameters.
  *
  * <p>This class is the {@code Main-Class} of the shaded
  * {@code zvec-java-<version>-with-dependencies.jar}, which bundles the natives
@@ -85,11 +86,16 @@ public class BasicExample {
             run(collection);
         }
 
+        // =========================================================================
+        // 12. IVF product quantization parameters (zvec >= v0.8.1)
+        // =========================================================================
+        ivfProductQuantization();
+
         Zvec.shutdown();
         System.out.println("\nDone!");
     }
 
-    /** Steps 4 to 10: insert, flush, query, fetch, update, delete and stats. */
+    /** Steps 4 to 11: insert, flush, query, grouped query, fetch, update, delete and stats. */
     private static void run(Collection collection) {
 
         // =========================================================================
@@ -141,7 +147,37 @@ public class BasicExample {
         }
 
         // =========================================================================
-        // 7. Fetch by PK (requires forward index on fields)
+        // 7. Grouped query (zvec >= v0.8.1)
+        // =========================================================================
+        // Instead of one flat list, the nearest matches are bucketed by the value
+        // of a scalar field: at most groupCount groups come back, each holding at
+        // most topkPerGroup documents ordered by similarity — a few documents per
+        // year rather than a page full of one year.
+        try (GroupByVectorQuery groupQuery = new GroupByVectorQuery()) {
+            groupQuery.setFieldName("embedding");
+            groupQuery.setGroupByFieldName("year");
+            groupQuery.setQueryVector(randVec(DIM));
+            groupQuery.setGroupCount(2);
+            groupQuery.setTopkPerGroup(2);
+            groupQuery.setOutputFields(new String[]{"title", "year"});
+
+            // Each group owns its documents, which stay readable after the query
+            // and the collection are closed; release them as a whole.
+            List<GroupResult> groups = collection.groupByQuery(groupQuery);
+            System.out.println("\nGrouped search over " + groups.size() + " years:");
+            for (GroupResult group : groups) {
+                System.out.printf("  year=%s (%d docs)%n",
+                        group.getGroupByValue(), group.getDocCount());
+                for (Doc d : group.getDocs()) {
+                    System.out.printf("    pk=%s, title=%s, score=%.4f%n",
+                            d.getPK(), d.getStringField("title"), d.getScore());
+                }
+            }
+            GroupResult.freeGroupResults(groups);
+        }
+
+        // =========================================================================
+        // 8. Fetch by PK (requires forward index on fields)
         // =========================================================================
         try {
             List<String> pks = new ArrayList<>();
@@ -158,7 +194,7 @@ public class BasicExample {
         }
 
         // =========================================================================
-        // 8. Update
+        // 9. Update
         // =========================================================================
         Doc updateDoc = new Doc();
         updateDoc.setPK("doc_0");
@@ -170,7 +206,7 @@ public class BasicExample {
         updateDoc.close();
 
         // =========================================================================
-        // 9. Delete
+        // 10. Delete
         // =========================================================================
         List<String> deletePks = new ArrayList<>();
         deletePks.add("doc_9");
@@ -178,10 +214,40 @@ public class BasicExample {
         System.out.println("Deleted: " + deleteResult.successCount + " docs");
 
         // =========================================================================
-        // 10. Stats
+        // 11. Stats
         // =========================================================================
         CollectionStats stats = collection.getStats();
         System.out.println("\nCollection stats: " + stats);
+    }
+
+    /**
+     * Configure IVF product quantization, which stores each IVF residual as a
+     * product-quantized code and cuts the memory footprint well below IVF
+     * RaBitQ's when the dimension is large.
+     *
+     * <p>{@link IndexParams#createIvfPq} selects {@link QuantizeType#PQ} for
+     * you: the C setter copies the chunk layout but leaves the quantize type
+     * alone, and PQ settings stored on an index that does not quantize with PQ
+     * are ignored silently. The engine validates the chunk layout against the
+     * field — its dimension, data type and metric — when the schema is built.
+     */
+    private static void ivfProductQuantization() {
+        try (IndexParams ivfPq = IndexParams.createIvfPq(
+                MetricType.COSINE, 100, 20, false, PqQuantizerParams.pq8(8))) {
+            PqQuantizerParams pq = ivfPq.getQuantizerPq();
+            System.out.printf("%nIVF with PQ: quantize=%s, numChunk=%d, numBits=%d%n",
+                    ivfPq.getQuantizeType(), pq.getNumChunk(), pq.getNumBits());
+        }
+
+        // OPQ learns a rotation before quantizing, which usually lowers the
+        // quantization error at the cost of a longer build. Both iteration counts
+        // must stay positive once rotation is enabled.
+        try (IndexParams opq = IndexParams.createIVF(MetricType.L2, 64, 20, false)) {
+            opq.setQuantizerPq(PqQuantizerParams.pq4(16).withRotation(10, 5));
+            PqQuantizerParams pq = opq.getQuantizerPq();
+            System.out.printf("IVF with OPQ (learned rotation): numBits=%d, enableRotate=%s, opqIter=%d%n",
+                    pq.getNumBits(), pq.getEnableRotate(), pq.getOpqIter());
+        }
     }
 
     private static float[] randVec(int dim) {

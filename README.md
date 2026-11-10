@@ -15,8 +15,9 @@ English | [简体中文](README_CN.md)
 - **Cross-platform, zero-config**: native libraries (`libzvec_c_api` + `libjniZvecNative`) are packed into the JAR under `platform-arch` directories and loaded automatically at runtime with no configuration.
 - **High-level wrappers**: type-safe, resource-safe Java objects layered on top of the generated `ZvecNative`.
 - **AutoCloseable resource management**: every object holding native resources implements `AutoCloseable` for use with try-with-resources.
-- **Rich index support**: HNSW, IVF, Flat, Invert (inverted), Vamana, DiskANN and IVF-RaBitQ (zvec &ge; v0.7.0), plus quantized variants (FP16/INT8/INT4/RaBitQ). Platform availability follows zvec itself: as of zvec v0.8.1 DiskANN is compiled for every platform this project ships — Linux x86_64/ARM64, macOS ARM64 and Intel, Windows x86_64 and ARM64 — and IVF-RaBitQ for all of them except Windows ARM64, where the native layer reports `NotSupported`.
+- **Rich index support**: HNSW, IVF, Flat, Invert (inverted), Vamana, DiskANN and IVF-RaBitQ (zvec &ge; v0.7.0), plus quantized variants (FP16/INT8/INT4/RaBitQ, and IVF product quantization with PQ4/PQ8/OPQ/FastScan as of zvec &ge; v0.8.1). Platform availability follows zvec itself: as of zvec v0.8.1 DiskANN is compiled for every platform this project ships — Linux x86_64/ARM64, macOS ARM64 and Intel, Windows x86_64 and ARM64 — and IVF-RaBitQ for all of them except Windows ARM64, where the native layer reports `NotSupported`.
 - **Document iteration**: snapshot iterators over collections with output-field selection (`Collection.createIterator`, zvec &ge; v0.7.0).
+- **Grouped vector search**: the nearest matches bucketed by a scalar field instead of one flat list (`Collection.groupByQuery`, zvec &ge; v0.8.1) — a few documents per category rather than a page full of one category.
 - **Jieba FTS out of the box**: the default cppjieba dictionary and HMM model are compiled into the native library (zvec &ge; v0.8.0), so the `jieba` full-text tokenizer needs no setup — nothing to download, extract or point at.
 - **Many data types**: 30+ field types, including sparse/dense vectors of various dimensions.
 - **Java 8+**: compatible with Java 8 and above.
@@ -237,8 +238,10 @@ zvec-java/
     │   ├── CollectionOptions.java / CollectionSchema.java / CollectionStats.java
     │   ├── FieldSchema.java                         # Field schema definitions
     │   ├── Doc.java                                 # Document CRUD (read/write typed fields)
-    │   ├── IndexParams.java                         # Index params (HNSW/IVF/Flat/Invert/Vamana/DiskANN/IVF-RaBitQ)
+    │   ├── IndexParams.java                         # Index params (HNSW/IVF/IVF-PQ/Flat/Invert/Vamana/DiskANN/IVF-RaBitQ)
+    │   ├── PqQuantizerParams.java                   # v0.8.1 IVF product-quantization configuration
     │   ├── VectorQuery.java / GroupByVectorQuery.java / MultiQuery.java / SubQuery.java
+    │   ├── GroupResult.java                         # v0.8.1 one group of a grouped vector search
     │   ├── FlatQueryParams.java / HnswQueryParams.java / IvfQueryParams.java /
     │   │   IvfRabitqQueryParams.java / DiskAnnQueryParams.java /
     │   │   VamanaQueryParams.java / FtsQueryParams.java  # typed query params, one per index family
@@ -254,6 +257,7 @@ zvec-java/
         ├── DocCoverageTest.java                     # Doc metadata / UTF-8 / exception strong assertions
         ├── SchemaIndexConfigCoverageTest.java       # Schema / IndexParams (out params) / Config / exceptions
         ├── CollectionQueryCoverageTest.java         # DML/DQL strong assertions (query/update/delete/filter)
+        │                                            #   plus grouped search (v0.8.1)
         ├── ApiCoverageTest.java                     # Wider API surface: enum codes, DiskANN / IVF-RaBitQ / FTS params, multi-query, iterator, I/O backend
         └── SearchIntegrationTest.java               # End-to-end search: FTS-only, jieba on the embedded dict, hybrid vector + FTS, multi-query fan-out
 ```
@@ -338,6 +342,43 @@ IndexParams hnswQ  = IndexParams.createHNSWQuantized(MetricType.IP, 32, 200, Qua
 IndexParams ivf    = IndexParams.createIVF(MetricType.COSINE, 256, 100, false);
 IndexParams flat   = IndexParams.createFlat(MetricType.L2);
 IndexParams invert = IndexParams.createInvert(true, false); // inverted, for text/tags
+
+// IVF with product quantization (zvec >= v0.8.1): 8 chunks of 8 bits each.
+// createIvfPq selects QuantizeType.PQ for you, and the engine validates the
+// chunk layout against the field when the schema is built.
+IndexParams ivfPq  = IndexParams.createIvfPq(
+        MetricType.COSINE, 256, 100, false, PqQuantizerParams.pq8(8));
+
+// PQ4 with FastScan, or OPQ (a learned rotation) with its iteration counts:
+IndexParams fast   = IndexParams.createIvfPq(
+        MetricType.L2, 256, 100, false, PqQuantizerParams.pq4(16).withFastScan(true));
+IndexParams opq    = IndexParams.createIvfPq(
+        MetricType.L2, 256, 100, false, PqQuantizerParams.pq8(8).withRotation(10, 5));
+```
+
+### Grouped vector search (zvec &ge; v0.8.1)
+
+```java
+try (GroupByVectorQuery query = new GroupByVectorQuery()) {
+    query.setFieldName("embedding");
+    query.setGroupByFieldName("category");   // any scalar field in the schema
+    query.setQueryVector(new float[128]);
+    query.setGroupCount(3);                  // at most 3 groups ...
+    query.setTopkPerGroup(2);                // ... of at most 2 documents each
+    query.setOutputFields(new String[]{"title"});
+
+    List<GroupResult> groups = coll.groupByQuery(query);
+    for (GroupResult group : groups) {
+        System.out.printf("category=%s (%d docs)%n",
+                group.getGroupByValue(), group.getDocCount());
+        for (Doc d : group.getDocs()) {
+            System.out.printf("  id=%s, score=%.4f%n", d.getPK(), d.getScore());
+        }
+    }
+    // Each group owns its documents: they stay readable after the query and the
+    // collection are closed, and are released as a whole.
+    GroupResult.freeGroupResults(groups);
+}
 ```
 
 ## Dependencies

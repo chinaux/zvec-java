@@ -297,4 +297,186 @@ class CollectionQueryCoverageTest extends TestSupport {
             }
         }
     }
+
+    // ---------------------------------------------------------------- Grouped search (zvec >= v0.8.1)
+
+    /**
+     * Build a Flat/L2 collection whose documents carry a {@code group_id} that
+     * changes every three documents, so a grouped search has something to
+     * bucket. Vectors are {@code [id, 0, 0, 0]}, which makes the L2 distance to
+     * the origin exactly {@code id*id} and the expected ordering easy to assert.
+     */
+    private Collection openGroupByCollection(Path dir, String name, int docCount) {
+        CollectionSchema schema = new CollectionSchema(name);
+        try (FieldSchema id = new FieldSchema("id", DataType.INT64, false, 0)) {
+            schema.addField(id);
+        }
+        try (FieldSchema groupId = new FieldSchema("group_id", DataType.INT64, false, 0)) {
+            schema.addField(groupId);
+        }
+        try (FieldSchema embedding = new FieldSchema("embedding", DataType.VECTOR_FP32, false, 4)) {
+            try (IndexParams flat = IndexParams.createFlat(MetricType.L2)) {
+                embedding.setIndexParams(flat);
+            }
+            schema.addField(embedding);
+        }
+        Collection coll = Zvec.createAndOpen(dir.resolve("coll").toString(), schema, null);
+        schema.close();
+        if (docCount == 0) {
+            return coll;
+        }
+        List<Doc> docs = new ArrayList<>(docCount);
+        for (int id = 0; id < docCount; id++) {
+            Doc doc = new Doc();
+            doc.setPK("doc_" + id);
+            doc.addInt64Field("id", id);
+            doc.addInt64Field("group_id", id / 3);
+            doc.addVectorFP32Field("embedding", new float[]{id, 0f, 0f, 0f});
+            docs.add(doc);
+        }
+        Collection.WriteResult wr = coll.insert(docs);
+        Doc.freeDocs(docs);
+        assertEquals(docCount, wr.successCount, "all documents should insert");
+        coll.flush();
+        return coll;
+    }
+
+    /** A grouped query over the origin returning only the {@code id} field. */
+    private GroupByVectorQuery newGroupByQuery(int groupCount, int topkPerGroup) {
+        GroupByVectorQuery query = new GroupByVectorQuery();
+        query.setFieldName("embedding");
+        query.setGroupByFieldName("group_id");
+        query.setQueryVector(new float[]{0f, 0f, 0f, 0f});
+        query.setGroupCount(groupCount);
+        query.setTopkPerGroup(topkPerGroup);
+        query.setOutputFields(new String[]{"id"});
+        // setFlatParams takes ownership of the params.
+        query.setFlatParams(new FlatQueryParams(false, 10.0f));
+        return query;
+    }
+
+    @Test
+    void testGroupByQueryOnEmptyCollectionReturnsNoGroups(@TempDir Path dir) {
+        try (Collection coll = openGroupByCollection(dir, "gb_empty", 0);
+             GroupByVectorQuery query = newGroupByQuery(2, 3)) {
+            List<GroupResult> groups = coll.groupByQuery(query);
+            assertTrue(groups.isEmpty(), "an empty collection has no group");
+        }
+    }
+
+    @Test
+    void testGroupByQueryBucketsResults(@TempDir Path dir) {
+        try (Collection coll = openGroupByCollection(dir, "gb_buckets", 9);
+             GroupByVectorQuery query = newGroupByQuery(2, 2)) {
+            List<GroupResult> groups = coll.groupByQuery(query);
+            try {
+                assertEquals(2, groups.size(), "the two nearest groups");
+                String[] wantValues = {"0", "1"};
+                for (int g = 0; g < groups.size(); g++) {
+                    GroupResult group = groups.get(g);
+                    assertEquals(wantValues[g], group.getGroupByValue());
+                    assertEquals(2, group.getDocCount());
+                    List<Doc> docs = group.getDocs();
+                    for (int pos = 0; pos < docs.size(); pos++) {
+                        long id = g * 3L + pos;
+                        Doc doc = docs.get(pos);
+                        assertEquals("doc_" + id, doc.getPK());
+                        assertEquals(id, doc.getInt64Field("id"));
+                        // Flat/L2 distance from [id,0,0,0] to the origin is id*id.
+                        assertEquals(id * id, doc.getScore(), 1e-3f);
+                        assertFalse(doc.hasField("embedding"), "only the requested field comes back");
+                        assertFalse(doc.hasField("group_id"), "only the requested field comes back");
+                    }
+                }
+            } finally {
+                GroupResult.freeGroupResults(groups);
+            }
+        }
+    }
+
+    @Test
+    void testGroupByQueryHonoursFilterAndIncludeVector(@TempDir Path dir) {
+        try (Collection coll = openGroupByCollection(dir, "gb_filter", 9);
+             GroupByVectorQuery query = newGroupByQuery(3, 1)) {
+            query.setFilter("id >= 3");
+            query.setIncludeVector(true);
+            List<GroupResult> groups = coll.groupByQuery(query);
+            try {
+                // Group 0 only holds ids 0..2, so the filter drops it.
+                assertEquals(2, groups.size());
+                for (GroupResult group : groups) {
+                    assertEquals(1, group.getDocCount());
+                    long groupId = Long.parseLong(group.getGroupByValue());
+                    assertTrue(groupId >= 1, "group " + groupId + " survived a filter of id >= 3");
+                    long id = groupId * 3;
+                    Doc doc = group.getDocs().get(0);
+                    assertEquals("doc_" + id, doc.getPK());
+                    assertEquals(id, doc.getInt64Field("id"));
+                    assertArrayEquals(new float[]{id, 0f, 0f, 0f},
+                            doc.getVectorFP32Field("embedding"), 0f);
+                }
+            } finally {
+                GroupResult.freeGroupResults(groups);
+            }
+        }
+    }
+
+    @Test
+    void testGroupByQueryWithoutMatchesReturnsNoGroups(@TempDir Path dir) {
+        try (Collection coll = openGroupByCollection(dir, "gb_none", 9);
+             GroupByVectorQuery query = newGroupByQuery(3, 1)) {
+            query.setFilter("id < 0");
+            assertTrue(coll.groupByQuery(query).isEmpty(), "no document matches the filter");
+        }
+    }
+
+    @Test
+    void testGroupByQueryRejectsInvalidArguments(@TempDir Path dir) {
+        try (Collection coll = openGroupByCollection(dir, "gb_invalid", 9)) {
+            try (GroupByVectorQuery zeroGroups = newGroupByQuery(0, 1)) {
+                ZvecException e = assertThrows(ZvecException.class, () -> coll.groupByQuery(zeroGroups));
+                assertEquals(ErrorCode.INVALID_ARGUMENT, e.getErrorCode());
+            }
+            try (GroupByVectorQuery missingField = newGroupByQuery(2, 1)) {
+                missingField.setGroupByFieldName("no_such_field");
+                ZvecException e = assertThrows(ZvecException.class, () -> coll.groupByQuery(missingField));
+                assertEquals(ErrorCode.INVALID_ARGUMENT, e.getErrorCode());
+            }
+            // A null query would reach the C API as a NULL pointer; the wrapper
+            // rejects it instead of letting the engine dereference it.
+            ZvecException nullQuery = assertThrows(ZvecException.class, () -> coll.groupByQuery(null));
+            assertEquals(ErrorCode.INVALID_ARGUMENT, nullQuery.getErrorCode());
+        }
+    }
+
+    /**
+     * The C result array owns the grouping values, every group's document array
+     * and the documents themselves, and {@code zvec_group_results_free} is the
+     * only way to release it. The wrapper moves the documents into {@link Doc}s
+     * and clears each group's array before handing the shell back, so the
+     * documents survive the collection and are not destroyed twice.
+     */
+    @Test
+    void testGroupByQueryResultsOutliveTheCollection(@TempDir Path dir) {
+        Collection coll = openGroupByCollection(dir, "gb_outlive", 6);
+        List<GroupResult> groups;
+        try (GroupByVectorQuery query = newGroupByQuery(2, 3)) {
+            groups = coll.groupByQuery(query);
+        }
+        coll.close();
+        try {
+            assertFalse(coll.isOpen());
+            assertEquals(2, groups.size());
+            assertEquals("0", groups.get(0).getGroupByValue());
+            assertEquals(3, groups.get(0).getDocCount());
+            assertEquals("doc_0", groups.get(0).getDocs().get(0).getPK());
+            assertEquals("1", groups.get(1).getGroupByValue());
+            assertEquals("doc_4", groups.get(1).getDocs().get(1).getPK());
+            assertEquals(4L, groups.get(1).getDocs().get(1).getInt64Field("id"));
+        } finally {
+            GroupResult.freeGroupResults(groups);
+        }
+        // Releasing twice must be a no-op, not a double free.
+        GroupResult.freeGroupResults(groups);
+    }
 }

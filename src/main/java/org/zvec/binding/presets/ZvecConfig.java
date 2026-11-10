@@ -77,6 +77,13 @@ public class ZvecConfig implements InfoMapper {
                 .put(new Info("ZVEC_BUILD_SHARED", "ZVEC_USE_SHARED").define(false))
                 // Include guard.
                 .put(new Info("ZVEC_C_API_H").define(false))
+                // ZVEC_PQ_QUANTIZER_PARAMS_DEFAULT expands to a brace-enclosed
+                // initializer list, which has no Java constant form: the parser
+                // emits `int ZVEC_PQ_QUANTIZER_PARAMS_DEFAULT()` and the JNI glue
+                // then fails to compile with "excess elements in scalar
+                // initializer". Skip it; PqQuantizerParams carries the same
+                // defaults on the Java side.
+                .put(new Info("ZVEC_PQ_QUANTIZER_PARAMS_DEFAULT").skip())
                 // Map plain C strings to Java String for ergonomic high-level wrappers
                 // (JavaCPP handles the const char* <-> String marshalling and, for
                 // arguments, generates the necessary temporary NUL-terminated copies).

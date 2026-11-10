@@ -5,6 +5,8 @@ import org.zvec.binding.DataType;
 import org.zvec.binding.Doc;
 import org.zvec.binding.FieldSchema;
 import org.zvec.binding.FtsPayload;
+import org.zvec.binding.GroupByVectorQuery;
+import org.zvec.binding.GroupResult;
 import org.zvec.binding.IndexParams;
 import org.zvec.binding.LogLevel;
 import org.zvec.binding.MetricType;
@@ -33,6 +35,10 @@ import java.util.Random;
  *   <li>insert / flush / vector query / full-text query all return real data -
  *       the Chinese full-text query is what proves the jieba dictionary
  *       embedded in the native library really is usable.</li>
+ *   <li>a grouped vector query returns per-group documents - the C result array
+ *       owns them and only {@code zvec_group_results_free} releases it, so this
+ *       is what proves the ownership hand-over does not double-free on this
+ *       platform.</li>
  * </ol>
  *
  * <p>Run it via {@code scripts/smoke-test.sh}, which assembles the classpath.
@@ -115,6 +121,7 @@ public final class SmokeTest {
             insertAndFlush(collection);
             queryByVector(collection);
             queryByFts(collection);
+            queryByGroup(collection);
 
             banner("5. Collection stats and shutdown");
             System.out.println("  stats            = " + collection.getStats());
@@ -183,6 +190,34 @@ public final class SmokeTest {
                     "jieba FTS query matched nothing - the dictionary embedded in the"
                             + " native library is not usable");
             Doc.freeDocs(hits);
+        }
+    }
+
+    private static void queryByGroup(Collection collection) {
+        banner("4c. Grouped vector query (zvec >= v0.8.1)");
+        try (GroupByVectorQuery query = new GroupByVectorQuery()) {
+            query.setFieldName("embedding");
+            query.setGroupByFieldName("year");
+            query.setQueryVector(randomVector());
+            query.setGroupCount(2);
+            query.setTopkPerGroup(1);
+            query.setOutputFields(new String[] {"year"});
+
+            List<GroupResult> groups = collection.groupByQuery(query);
+            for (GroupResult group : groups) {
+                System.out.printf("    year=%s docs=%d%n",
+                        group.getGroupByValue(), group.getDocCount());
+            }
+            check(groups.size() == 2, "expected 2 groups, got " + groups.size());
+            for (GroupResult group : groups) {
+                check(group.getDocCount() == 1,
+                        "expected 1 doc per group, got " + group.getDocCount());
+                Doc doc = group.getDocs().get(0);
+                check(group.getGroupByValue().equals(String.valueOf(doc.getInt32Field("year"))),
+                        "group " + group.getGroupByValue() + " holds a document of year "
+                                + doc.getInt32Field("year"));
+            }
+            GroupResult.freeGroupResults(groups);
         }
     }
 

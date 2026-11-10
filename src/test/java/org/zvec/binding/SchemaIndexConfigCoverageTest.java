@@ -200,6 +200,141 @@ class SchemaIndexConfigCoverageTest extends TestSupport {
         assertThrows(ZvecException.class, () -> IndexParams.createFlat(null));
         assertThrows(ZvecException.class, () -> IndexParams.createIVF(null, 8, 10, false));
         assertThrows(ZvecException.class, () -> IndexParams.createIvfRabitq(null, 8, 32, 0));
+
+        ZvecException pq = assertThrows(ZvecException.class,
+                () -> IndexParams.createIvfPq(MetricType.L2, 8, 10, false, null));
+        assertEquals(ErrorCode.INVALID_ARGUMENT, pq.getErrorCode());
+    }
+
+    // ------------------------------------------------- IVF product quantization (zvec >= v0.8.1)
+
+    @Test
+    void testPqQuantizerParamsDefaults() {
+        // Mirrors ZVEC_PQ_QUANTIZER_PARAMS_DEFAULT: {8, 8, false, false, 5, 4}.
+        PqQuantizerParams pq = new PqQuantizerParams();
+        assertEquals(8, pq.getNumChunk());
+        assertEquals(8, pq.getNumBits());
+        assertFalse(pq.getEnableRotate());
+        assertFalse(pq.getFastScan());
+        assertEquals(5, pq.getOpqIter());
+        assertEquals(4, pq.getOpqPqIter());
+        assertEquals(new PqQuantizerParams(8, 8, false, false, 5, 4), pq);
+        assertEquals(new PqQuantizerParams().hashCode(), pq.hashCode());
+        assertTrue(pq.toString().contains("numChunk=8"), pq.toString());
+    }
+
+    @Test
+    void testPqQuantizerParamsFactories() {
+        assertEquals(new PqQuantizerParams(16, 4, false, false, 5, 4), PqQuantizerParams.pq4(16));
+        assertEquals(new PqQuantizerParams(3, 8, false, false, 5, 4), PqQuantizerParams.pq8(3));
+
+        PqQuantizerParams rotated = PqQuantizerParams.pq4(8).withRotation(7, 3);
+        assertTrue(rotated.getEnableRotate());
+        assertEquals(7, rotated.getOpqIter());
+        assertEquals(3, rotated.getOpqPqIter());
+
+        PqQuantizerParams fastScan = PqQuantizerParams.pq4(8).withFastScan(true);
+        assertTrue(fastScan.getFastScan());
+        assertNotEquals(PqQuantizerParams.pq4(8), fastScan);
+
+        PqQuantizerParams mutated = PqQuantizerParams.pq8(4);
+        mutated.setNumChunk(6);
+        mutated.setNumBits(4);
+        mutated.setEnableRotate(true);
+        mutated.setFastScan(true);
+        mutated.setOpqIter(9);
+        mutated.setOpqPqIter(2);
+        assertEquals(new PqQuantizerParams(6, 4, true, true, 9, 2), mutated);
+    }
+
+    @Test
+    void testIvfPqIndexParamsRoundtrip() {
+        PqQuantizerParams pq = PqQuantizerParams.pq4(4).withFastScan(true).withRotation(7, 3);
+        try (IndexParams p = IndexParams.createIvfPq(MetricType.COSINE, 32, 10, true, pq)) {
+            assertEquals(IndexType.IVF, p.getType());
+            assertEquals(MetricType.COSINE, p.getMetricType());
+            int[] ivf = p.getIVFParams();
+            assertEquals(32, ivf[0], "nList");
+            assertEquals(10, ivf[1], "nIters");
+            assertEquals(1, ivf[2], "useSoar");
+            // The factory selects PQ; without it the engine ignores the settings.
+            assertEquals(QuantizeType.PQ, p.getQuantizeType());
+            assertEquals(pq, p.getQuantizerPq());
+        }
+    }
+
+    /**
+     * Covers the two things the C setter does not do for us: it leaves the
+     * quantize type alone, and it copies the struct rather than holding a
+     * reference to it.
+     */
+    @Test
+    void testSetQuantizerPqSelectsPqAndCopies() {
+        try (IndexParams p = IndexParams.createIVF(MetricType.COSINE, 32, 10, true)) {
+            assertEquals(QuantizeType.UNDEFINED, p.getQuantizeType());
+
+            PqQuantizerParams want = PqQuantizerParams.pq8(8);
+            p.setQuantizerPq(want);
+            assertEquals(QuantizeType.PQ, p.getQuantizeType());
+            assertEquals(want, p.getQuantizerPq());
+
+            // The values were copied: changing the Java object afterwards does
+            // not reach the native params.
+            want.setNumChunk(2);
+            assertEquals(8, p.getQuantizerPq().getNumChunk());
+
+            // Five bits per chunk is not a PQ code width: the engine rejects it
+            // and the stored configuration must survive untouched.
+            PqQuantizerParams rejected = PqQuantizerParams.pq8(8);
+            rejected.setNumBits(5);
+            ZvecException e = assertThrows(ZvecException.class, () -> p.setQuantizerPq(rejected));
+            assertEquals(ErrorCode.INVALID_ARGUMENT, e.getErrorCode());
+            assertEquals(PqQuantizerParams.pq8(8), p.getQuantizerPq());
+            assertEquals(QuantizeType.PQ, p.getQuantizeType());
+        }
+    }
+
+    /**
+     * Every index type the C setter refuses. HNSW can quantize with PQ, but only
+     * through {@link IndexParams#setQuantizeType} with the engine defaults, so it
+     * is rejected here too.
+     */
+    @Test
+    void testQuantizerPqRejectsNonIvfParams() {
+        IndexParams[] params = {
+                IndexParams.createHNSW(MetricType.L2, 16, 200),
+                IndexParams.createIvfRabitq(MetricType.L2, 16, 7, 0),
+                IndexParams.createFlat(MetricType.L2),
+                IndexParams.createInvert(false, false),
+        };
+        try {
+            for (IndexParams p : params) {
+                IndexType type = p.getType();
+                ZvecException set = assertThrows(ZvecException.class,
+                        () -> p.setQuantizerPq(new PqQuantizerParams()), type.name());
+                assertEquals(ErrorCode.INVALID_ARGUMENT, set.getErrorCode(), type.name());
+                ZvecException get = assertThrows(ZvecException.class, p::getQuantizerPq, type.name());
+                assertEquals(ErrorCode.INVALID_ARGUMENT, get.getErrorCode(), type.name());
+            }
+        } finally {
+            for (IndexParams p : params) {
+                p.destroy();
+            }
+        }
+    }
+
+    @Test
+    void testPqQuantizerParamsRotation() {
+        try (IndexParams p = IndexParams.createIVF(MetricType.L2, 16, 10, false)) {
+            PqQuantizerParams pq = PqQuantizerParams.pq8(4).withRotation(7, 3);
+            p.setQuantizerPq(pq);
+            assertEquals(pq, p.getQuantizerPq());
+
+            // Rotation with a zero iteration count is rejected.
+            PqQuantizerParams noIter = PqQuantizerParams.pq8(4).withRotation(0, 3);
+            ZvecException e = assertThrows(ZvecException.class, () -> p.setQuantizerPq(noIter));
+            assertEquals(ErrorCode.INVALID_ARGUMENT, e.getErrorCode());
+        }
     }
 
     // ---------------------------------------------------------------- ConfigData

@@ -15,8 +15,9 @@
 - **跨平台开箱即用**:原生库(`libzvec_c_api` + `libjniZvecNative`)按 `平台-架构` 目录打进 JAR,运行时零配置自动加载
 - **高层包装类**:在生成的 `ZvecNative` 之上提供类型安全、资源安全的 Java 对象
 - **AutoCloseable 资源管理**:所有持有原生资源的对象均实现 `AutoCloseable`,支持 try-with-resources
-- **丰富的索引支持**:HNSW、IVF、Flat、Invert(倒排)、Vamana、DiskANN、IVF-RaBitQ(zvec ≥ v0.7.0)及量化变体(FP16/INT8/INT4/RaBitQ)。平台可用性与 zvec 本体一致:自 zvec v0.8.1 起,DiskANN 已覆盖本项目发布的全部平台(Linux x86_64/ARM64、macOS ARM64 与 Intel、Windows x86_64 与 ARM64),IVF-RaBitQ 覆盖除 Windows ARM64 之外的全部平台,后者原生层返回 `NotSupported`
+- **丰富的索引支持**:HNSW、IVF、Flat、Invert(倒排)、Vamana、DiskANN、IVF-RaBitQ(zvec ≥ v0.7.0)及量化变体(FP16/INT8/INT4/RaBitQ,以及 zvec ≥ v0.8.1 起 IVF 上的乘积量化 PQ4/PQ8/OPQ/FastScan)。平台可用性与 zvec 本体一致:自 zvec v0.8.1 起,DiskANN 已覆盖本项目发布的全部平台(Linux x86_64/ARM64、macOS ARM64 与 Intel、Windows x86_64 与 ARM64),IVF-RaBitQ 覆盖除 Windows ARM64 之外的全部平台,后者原生层返回 `NotSupported`
 - **文档迭代器**:支持对集合做快照遍历,可选择输出字段(`Collection.createIterator`,zvec ≥ v0.7.0)
+- **分组向量检索**:最近邻结果按某个标量字段分桶返回,而不是一整个平铺列表(`Collection.groupByQuery`,zvec ≥ v0.8.1)—— 每个类目各取几条,而不是整页都是同一个类目
 - **Jieba 全文索引开箱即用**:cppjieba 默认词表与 HMM 模型已编译进原生库(zvec ≥ v0.8.0),`jieba` 分词器无需任何额外配置 —— 不用下载、不用解压、也不用指定路径
 - **多种数据类型**:支持 30 余种字段类型,包括各维度稀疏/稠密向量
 - **Java 8+**:最低兼容 Java 8
@@ -206,8 +207,10 @@ zvec-java/
     │   ├── CollectionOptions.java / CollectionSchema.java / CollectionStats.java
     │   ├── FieldSchema.java                         # 字段 Schema 定义
     │   ├── Doc.java                                 # 文档 CRUD(读写各类型字段)
-    │   ├── IndexParams.java                         # 索引参数(HNSW/IVF/Flat/Invert/Vamana/DiskANN/IVF-RaBitQ)
+    │   ├── IndexParams.java                         # 索引参数(HNSW/IVF/IVF-PQ/Flat/Invert/Vamana/DiskANN/IVF-RaBitQ)
+    │   ├── PqQuantizerParams.java                   # v0.8.1 IVF 乘积量化配置
     │   ├── VectorQuery.java / GroupByVectorQuery.java / MultiQuery.java / SubQuery.java
+    │   ├── GroupResult.java                         # v0.8.1 分组向量检索中的一个分组
     │   ├── FlatQueryParams.java / HnswQueryParams.java / IvfQueryParams.java /
     │   │   IvfRabitqQueryParams.java / DiskAnnQueryParams.java /
     │   │   VamanaQueryParams.java / FtsQueryParams.java  # 类型化查询参数,每种索引族一个
@@ -223,6 +226,7 @@ zvec-java/
         ├── DocCoverageTest.java                     # Doc 元数据/UTF-8/异常 强断言
         ├── SchemaIndexConfigCoverageTest.java       # Schema/IndexParams(out 参数)/Config/异常
         ├── CollectionQueryCoverageTest.java         # DML/DQL 强断言(query/update/delete/filter)
+        │                                            #   以及 v0.8.1 分组检索
         ├── ApiCoverageTest.java                     # 更广的 API 面:枚举码、DiskANN/IVF-RaBitQ/FTS 参数、multi-query、迭代器、I/O 后端
         └── SearchIntegrationTest.java               # 端到端检索:纯 FTS、内嵌词表上的 jieba、向量 + FTS 混合、multi-query 多路子查询
 ```
@@ -307,6 +311,41 @@ IndexParams hnswQ  = IndexParams.createHNSWQuantized(MetricType.IP, 32, 200, Qua
 IndexParams ivf    = IndexParams.createIVF(MetricType.COSINE, 256, 100, false);
 IndexParams flat   = IndexParams.createFlat(MetricType.L2);
 IndexParams invert = IndexParams.createInvert(true, false); // 倒排,用于文本/标签
+
+// IVF 乘积量化(zvec ≥ v0.8.1):8 个 chunk,每个 8 bit。createIvfPq 会替你选好
+// QuantizeType.PQ;chunk 布局由引擎在建 schema 时按字段(维度/类型/度量)校验。
+IndexParams ivfPq  = IndexParams.createIvfPq(
+        MetricType.COSINE, 256, 100, false, PqQuantizerParams.pq8(8));
+
+// PQ4 + FastScan,或 OPQ(学习旋转矩阵)并给出迭代次数:
+IndexParams fast   = IndexParams.createIvfPq(
+        MetricType.L2, 256, 100, false, PqQuantizerParams.pq4(16).withFastScan(true));
+IndexParams opq    = IndexParams.createIvfPq(
+        MetricType.L2, 256, 100, false, PqQuantizerParams.pq8(8).withRotation(10, 5));
+```
+
+### 分组向量检索(zvec ≥ v0.8.1)
+
+```java
+try (GroupByVectorQuery query = new GroupByVectorQuery()) {
+    query.setFieldName("embedding");
+    query.setGroupByFieldName("category");   // schema 里任意标量字段
+    query.setQueryVector(new float[128]);
+    query.setGroupCount(3);                  // 最多 3 个分组 ...
+    query.setTopkPerGroup(2);                // ... 每组最多 2 条文档
+    query.setOutputFields(new String[]{"title"});
+
+    List<GroupResult> groups = coll.groupByQuery(query);
+    for (GroupResult group : groups) {
+        System.out.printf("category=%s (%d docs)%n",
+                group.getGroupByValue(), group.getDocCount());
+        for (Doc d : group.getDocs()) {
+            System.out.printf("  id=%s, score=%.4f%n", d.getPK(), d.getScore());
+        }
+    }
+    // 每个分组拥有自己的文档:查询与集合关闭后仍可读,释放时整组一起释放。
+    GroupResult.freeGroupResults(groups);
+}
 ```
 
 ## 依赖

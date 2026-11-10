@@ -1,6 +1,7 @@
 package org.zvec.binding;
 
 import org.zvec.binding.ZvecNative.zvec_index_params_t;
+import org.zvec.binding.ZvecNative.zvec_pq_quantizer_params_t;
 import org.zvec.binding.ZvecNative.zvec_string_array_t;
 import org.bytedeco.javacpp.BoolPointer;
 import org.bytedeco.javacpp.BytePointer;
@@ -16,6 +17,7 @@ import org.bytedeco.javacpp.PointerPointer;
  *   <li>{@link #createHNSW(MetricType, int, int)}</li>
  *   <li>{@link #createHNSWQuantized(MetricType, int, int, QuantizeType)}</li>
  *   <li>{@link #createIVF(MetricType, int, int, boolean)}</li>
+ *   <li>{@link #createIvfPq(MetricType, int, int, boolean, PqQuantizerParams)}</li>
  *   <li>{@link #createFlat(MetricType)}</li>
  *   <li>{@link #createDiskAnn(MetricType, int, int, int)}</li>
  *   <li>{@link #createDiskAnnQuantized(MetricType, int, int, int, QuantizeType)}</li>
@@ -106,6 +108,30 @@ public class IndexParams implements AutoCloseable {
             ZvecException.throwIfError(
                     ZvecNative.zvec_index_params_set_ivf_params(ptr, nList, nIters, useSoar));
         });
+    }
+
+    /**
+     * Create IVF index parameters quantized with product quantization
+     * (zvec &ge; v0.8.1). Equivalent to
+     * {@link #createIVF(MetricType, int, int, boolean)} followed by
+     * {@link #setQuantizerPq(PqQuantizerParams)}.
+     *
+     * @param metricType distance metric
+     * @param nList      number of cluster centers
+     * @param nIters     k-means iterations used to train the centers
+     * @param useSoar    build the redundant SOAR assignments that improve recall
+     * @param pq         chunk layout, bit width, rotation and FastScan settings
+     */
+    public static IndexParams createIvfPq(MetricType metricType, int nList, int nIters,
+                                          boolean useSoar, PqQuantizerParams pq) {
+        IndexParams params = createIVF(metricType, nList, nIters, useSoar);
+        try {
+            params.setQuantizerPq(pq);
+        } catch (RuntimeException e) {
+            params.destroy();
+            throw e;
+        }
+        return params;
     }
 
     public static IndexParams createFlat(MetricType metricType) {
@@ -242,6 +268,48 @@ public class IndexParams implements AutoCloseable {
     public void setQuantizeType(QuantizeType quantizeType) {
         ZvecException.throwIfError(
                 ZvecNative.zvec_index_params_set_quantize_type(handle, quantizeType.getCode()));
+    }
+
+    /**
+     * Set the IVF product-quantization configuration (zvec &ge; v0.8.1) and
+     * switch the quantize type to {@link QuantizeType#PQ}.
+     *
+     * <p>The C setter copies the values but leaves the quantize type alone, and
+     * PQ settings stored on an index that does not quantize with PQ are ignored
+     * silently, so the type is selected here.
+     *
+     * <p>Only IVF index params accept this option — {@link #createIvfPq} is the
+     * shorthand — so every other index type throws a {@link ZvecException} with
+     * {@link ErrorCode#INVALID_ARGUMENT}. HNSW can still quantize with PQ, but
+     * only with the engine defaults: use
+     * {@link #createHNSWQuantized(MetricType, int, int, QuantizeType)} with
+     * {@link QuantizeType#PQ}.
+     */
+    public void setQuantizerPq(PqQuantizerParams pq) {
+        if (pq == null) {
+            throw new ZvecException(ErrorCode.INVALID_ARGUMENT, "PQ quantizer params cannot be null");
+        }
+        try (zvec_pq_quantizer_params_t raw = pq.toNative()) {
+            ZvecException.throwIfError(
+                    ZvecNative.zvec_index_params_set_quantizer_pq(handle, raw));
+        }
+        setQuantizeType(QuantizeType.PQ);
+    }
+
+    /**
+     * Read the IVF product-quantization configuration (zvec &ge; v0.8.1).
+     *
+     * <p>Non-IVF params throw a {@link ZvecException} with
+     * {@link ErrorCode#INVALID_ARGUMENT}; the value is meaningful once
+     * {@link #setQuantizerPq(PqQuantizerParams)} has selected
+     * {@link QuantizeType#PQ}.
+     */
+    public PqQuantizerParams getQuantizerPq() {
+        try (zvec_pq_quantizer_params_t raw = new zvec_pq_quantizer_params_t()) {
+            ZvecException.throwIfError(
+                    ZvecNative.zvec_index_params_get_quantizer_pq(handle, raw));
+            return PqQuantizerParams.fromNative(raw);
+        }
     }
 
     public int getHNSWM() {
