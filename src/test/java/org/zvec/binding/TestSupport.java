@@ -102,13 +102,15 @@ abstract class TestSupport {
      * Whether the current JVM runs on a platform where zvec compiles DiskANN in.
      *
      * <p>Mirrors {@code DISKANN_SUPPORTED} in the zvec top-level CMakeLists.txt
-     * (v0.8.0): Linux x86_64/aarch64, macOS arm64, and Windows x86_64 — the
-     * last through the overlapped-I/O backend zvec added in v0.8.0. Two of the
-     * platforms this project ships natives for are left out, macOS x86_64 and
-     * Windows arm64, and link the DiskANN stub instead; there schema validation
-     * rejects a DiskANN index with {@code NotSupported}, so the end-to-end
-     * DiskANN tests must be skipped rather than failed. Parameter round-trip
-     * tests are unaffected — they never reach the native validator.
+     * (v0.8.1): 64-bit Linux, macOS and Windows on x86_64 or arm64 — v0.8.1
+     * added Intel macOS and Windows arm64, the two platforms this project ships
+     * natives for that used to link the DiskANN stub. That is now every shipped
+     * platform, so the end-to-end DiskANN test runs on all of them. The gate
+     * stays because a JVM on anything else (a 32-bit build, s390x, ppc64le)
+     * still links the stub, and there schema validation rejects a DiskANN index
+     * with {@code NotSupported}, so the test must be skipped rather than failed.
+     * Parameter round-trip tests are unaffected — they never reach the native
+     * validator.
      */
     static boolean isDiskAnnSupported() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -118,6 +120,6 @@ abstract class TestSupport {
         boolean isWindows = os.contains("windows");
         boolean isX64 = arch.equals("amd64") || arch.equals("x86_64");
         boolean isArm64 = arch.equals("aarch64") || arch.equals("arm64");
-        return (isLinux && (isX64 || isArm64)) || (isMac && isArm64) || (isWindows && isX64);
+        return (isLinux || isMac || isWindows) && (isX64 || isArm64);
     }
 }

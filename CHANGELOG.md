@@ -7,8 +7,32 @@ zvec `v0.7.0`. A binding-only fix bumps the third segment.
 
 ## [Unreleased]
 
-Tracks zvec `v0.8.0-beta2` (`8397071`); the artifact version is
-`0.8.1-SNAPSHOT` until the release is cut.
+Tracks zvec `v0.8.1` (`30d662d`); the artifact version is `0.8.1-SNAPSHOT`
+until the release is cut.
+
+### Changed
+
+- The `zvec` submodule moved from `v0.8.0-beta2` (`8397071`) to `v0.8.1`
+  (`30d662d`), and with it the per-platform index gates the READMEs document and
+  `TestSupport.isDiskAnnSupported()` mirrors. zvec now compiles DiskAnn for
+  64-bit Linux, macOS and Windows on x86_64 *and* arm64 (#874), so Intel macOS
+  and Windows ARM64 — the two shipped platforms that used to link the DiskAnn
+  stub and report `NotSupported` — get the real index, and it compiles RaBitQ for
+  arm64 Linux, macOS, Android and iOS on top of the x86_64 targets it already had
+  (#832). Of the six platforms this project ships natives for, only Windows ARM64
+  still lacks an index type: RaBitQ's arm64 kernels do not cover Windows, so
+  IVF-RaBitQ keeps reporting `NotSupported` there. `release.yml`'s per-leg
+  comments and its release-notes text follow, and the end-to-end DiskANN test now
+  runs on every CI platform instead of being skipped on two.
+- `Zvec.getVersion()` returns `v0.8.1` and `getVersionMajor/Minor/Patch()` return
+  0.8.1. A local build resolves that through `git describe` on the submodule,
+  which is tagged; CI checks the submodule out detached and without tags, so both
+  release workflows keep feeding `-DOVERRIDE_GIT_DESCRIBE` from our own tag.
+- Nothing was removed from the C API between the two commits, so no existing Java
+  surface moved: `src/include/zvec/c_api.h` gains four functions, two types and
+  two macros, and loses none. `NOTICE` needed no regeneration — every line of
+  `zvec/NOTICE` at `30d662d` is already reproduced in ours, which is what
+  `publish-jar.yml` checks.
 
 ## [0.8.0]
 

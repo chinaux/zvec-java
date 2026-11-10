@@ -15,7 +15,7 @@
 - **跨平台开箱即用**:原生库(`libzvec_c_api` + `libjniZvecNative`)按 `平台-架构` 目录打进 JAR,运行时零配置自动加载
 - **高层包装类**:在生成的 `ZvecNative` 之上提供类型安全、资源安全的 Java 对象
 - **AutoCloseable 资源管理**:所有持有原生资源的对象均实现 `AutoCloseable`,支持 try-with-resources
-- **丰富的索引支持**:HNSW、IVF、Flat、Invert(倒排)、Vamana、DiskANN、IVF-RaBitQ(zvec ≥ v0.7.0)及量化变体(FP16/INT8/INT4/RaBitQ)。平台可用性与 zvec 本体一致:DiskANN 需要 Linux x86_64/ARM64、macOS ARM64 或 Windows x86_64,IVF-RaBitQ 需要 Linux x86_64 或 Windows x86_64,其余平台(尤其是 macOS Intel 与 Windows ARM64)原生层返回 `NotSupported`
+- **丰富的索引支持**:HNSW、IVF、Flat、Invert(倒排)、Vamana、DiskANN、IVF-RaBitQ(zvec ≥ v0.7.0)及量化变体(FP16/INT8/INT4/RaBitQ)。平台可用性与 zvec 本体一致:自 zvec v0.8.1 起,DiskANN 已覆盖本项目发布的全部平台(Linux x86_64/ARM64、macOS ARM64 与 Intel、Windows x86_64 与 ARM64),IVF-RaBitQ 覆盖除 Windows ARM64 之外的全部平台,后者原生层返回 `NotSupported`
 - **文档迭代器**:支持对集合做快照遍历,可选择输出字段(`Collection.createIterator`,zvec ≥ v0.7.0)
 - **Jieba 全文索引开箱即用**:cppjieba 默认词表与 HMM 模型已编译进原生库(zvec ≥ v0.8.0),`jieba` 分词器无需任何额外配置 —— 不用下载、不用解压、也不用指定路径
 - **多种数据类型**:支持 30 余种字段类型,包括各维度稀疏/稠密向量
@@ -77,7 +77,7 @@ implementation 'org.zvec:zvec-java:0.8.0:linux-x86_64'
 
 受支持平台:macOS ARM64、macOS Intel(x86_64)、Linux x86_64、Linux ARM64、Windows x86_64、Windows ARM64。Linux 原生库在 `manylinux_2_28` 镜像中构建,要求 glibc 2.27 及以上,因此 Ubuntu 18.04+、Debian 10+、RHEL/CentOS 8+、Fedora 28+ 均可使用。两个 macOS 原生库从 0.8.0 起都以 11.0 为部署目标,即 macOS 11(Big Sur)及以上均可使用;**已发布的 0.7.0 macOS 原生库构建时没有指定部署目标,因此只能在 macOS 15 及以上加载。**
 
-有两个平台的索引集合是裁剪过的,因为 zvec 只为[特性](#特性)中列出的架构编译 DiskAnn 与 IVF-RaBitQ:在 macOS Intel 和 Windows ARM64 上,这两种索引都返回 `NotSupported`。其余能力(包括 jieba 全文分词)在全部六个平台上都可用。
+只有一个平台的索引集合是裁剪过的:zvec v0.8.1 已为[特性](#特性)中列出的全部架构编译 DiskAnn,但其 IVF-RaBitQ 的 arm64 kernel 不覆盖 Windows,因此 Windows ARM64 上的 IVF-RaBitQ 返回 `NotSupported`。其余能力(包括 jieba 全文分词)在全部六个平台上都可用。
 
 在 Windows on ARM 上,以模拟方式运行的 x86_64 JVM 会向 JavaCPP 报告 `windows-x86_64`,因此会选中那个 classifier,同样可用;`windows-arm64` classifier 面向原生 ARM64 JVM。
 
@@ -100,11 +100,13 @@ implementation 'org.zvec:zvec-java:0.8.0:linux-x86_64'
 
 Zvec 核心以 **git submodule** 形式引入到 `./zvec`:
 
-> **版本要求**:子模块当前指向 **zvec v0.8.0-beta2**(`8397071`)。相对 v0.7.0,C API
-> 删掉了 4 个 jieba 词表目录相关入口 —— 默认词表与 HMM 模型现在直接编译进
-> `libzvec_c_api` —— 并新增了 `ZVEC_DATA_TYPE_VECTOR_UINT8` 与 Windows overlapped I/O
-> 后端,绑定层都已跟进。v0.7.0 引入的能力(DiskANN / IVF-RaBitQ 索引与查询参数、
-> 集合文档迭代器、I/O 后端自省)依然全部暴露。
+> **版本要求**:子模块当前指向 **zvec v0.8.1**(`30d662d`)。相对 v0.8.0-beta2,C API
+> 是纯增量的:新增分组向量检索(`zvec_collection_group_by_query`、
+> `zvec_group_result_t`、`zvec_group_results_free`)与 IVF 乘积量化
+> (`zvec_index_params_set_quantizer_pq`、`zvec_index_params_get_quantizer_pq`、
+> `zvec_pq_quantizer_params_t`、`ZVEC_QUANTIZE_TYPE_PQ`),绑定层都已跟进。没有任何删除,
+> 因此 v0.7.0 与 v0.8.0 引入的能力(DiskANN / IVF-RaBitQ 索引与查询参数、集合文档迭代器、
+> I/O 后端自省、内嵌词表上的 jieba 全文检索)依然全部暴露。
 
 ```bash
 git clone https://github.com/zvec-ai/zvec-java.git

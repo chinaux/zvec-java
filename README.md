@@ -15,7 +15,7 @@ English | [简体中文](README_CN.md)
 - **Cross-platform, zero-config**: native libraries (`libzvec_c_api` + `libjniZvecNative`) are packed into the JAR under `platform-arch` directories and loaded automatically at runtime with no configuration.
 - **High-level wrappers**: type-safe, resource-safe Java objects layered on top of the generated `ZvecNative`.
 - **AutoCloseable resource management**: every object holding native resources implements `AutoCloseable` for use with try-with-resources.
-- **Rich index support**: HNSW, IVF, Flat, Invert (inverted), Vamana, DiskANN and IVF-RaBitQ (zvec &ge; v0.7.0), plus quantized variants (FP16/INT8/INT4/RaBitQ). Platform availability follows zvec itself: DiskANN requires Linux x86_64/ARM64, macOS ARM64 or Windows x86_64, and IVF-RaBitQ requires Linux x86_64 or Windows x86_64; on the remaining platforms — notably macOS Intel and Windows ARM64 — the native layer reports `NotSupported`.
+- **Rich index support**: HNSW, IVF, Flat, Invert (inverted), Vamana, DiskANN and IVF-RaBitQ (zvec &ge; v0.7.0), plus quantized variants (FP16/INT8/INT4/RaBitQ). Platform availability follows zvec itself: as of zvec v0.8.1 DiskANN is compiled for every platform this project ships — Linux x86_64/ARM64, macOS ARM64 and Intel, Windows x86_64 and ARM64 — and IVF-RaBitQ for all of them except Windows ARM64, where the native layer reports `NotSupported`.
 - **Document iteration**: snapshot iterators over collections with output-field selection (`Collection.createIterator`, zvec &ge; v0.7.0).
 - **Jieba FTS out of the box**: the default cppjieba dictionary and HMM model are compiled into the native library (zvec &ge; v0.8.0), so the `jieba` full-text tokenizer needs no setup — nothing to download, extract or point at.
 - **Many data types**: 30+ field types, including sparse/dense vectors of various dimensions.
@@ -90,10 +90,10 @@ carry an 11.0 deployment target as of 0.8.0, so macOS 11 (Big Sur) and later are
 covered; **the published 0.7.0 macOS libraries were built without one and
 therefore load only on macOS 15 or newer.**
 
-Two platforms ship a reduced index set, because zvec compiles DiskAnn and
-IVF-RaBitQ only for the architectures listed under [Features](#features): on
-macOS Intel and Windows ARM64 both index types report `NotSupported`. Everything
-else, including the jieba full-text tokenizer, is available on all six.
+One platform ships a reduced index set: zvec v0.8.1 compiles DiskAnn for every
+architecture listed under [Features](#features), but its IVF-RaBitQ arm64 kernels
+do not cover Windows, so Windows ARM64 reports `NotSupported` for IVF-RaBitQ.
+Everything else, including the jieba full-text tokenizer, is available on all six.
 
 On Windows on ARM, an x86_64 JVM running under emulation reports `windows-x86_64`
 to JavaCPP and therefore picks up that classifier, which also works; the
@@ -123,13 +123,16 @@ straight to [Code Examples](#code-examples).
 
 The Zvec core is included as a **git submodule** at `./zvec`:
 
-> **Version requirement**: the submodule is pinned to **zvec v0.8.0-beta2**
-> (`8397071`). Relative to v0.7.0 the C API drops the four jieba
-> dictionary-directory entry points — the default dictionary and HMM model are
-> now compiled into `libzvec_c_api` — and adds `ZVEC_DATA_TYPE_VECTOR_UINT8`
-> plus the Windows overlapped-I/O backend; the bindings follow both. Everything
-> v0.7.0 added (DiskANN / IVF-RaBitQ index and query parameters, the collection
-> document iterator, I/O backend introspection) is still exposed.
+> **Version requirement**: the submodule is pinned to **zvec v0.8.1**
+> (`30d662d`). Relative to v0.8.0-beta2 the C API is purely additive: it adds
+> grouped vector search (`zvec_collection_group_by_query`,
+> `zvec_group_result_t`, `zvec_group_results_free`) and IVF product
+> quantization (`zvec_index_params_set_quantizer_pq`,
+> `zvec_index_params_get_quantizer_pq`, `zvec_pq_quantizer_params_t`,
+> `ZVEC_QUANTIZE_TYPE_PQ`); the bindings expose both. Nothing was removed, so
+> everything v0.7.0 and v0.8.0 added (DiskANN / IVF-RaBitQ index and query
+> parameters, the collection document iterator, I/O backend introspection,
+> jieba FTS on the embedded dictionary) is still exposed.
 
 ```bash
 git clone https://github.com/zvec-ai/zvec-java.git

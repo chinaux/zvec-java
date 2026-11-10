@@ -365,8 +365,8 @@ class ApiCoverageTest extends TestSupport {
     @Test
     void testDiskAnnEndToEndQuery(@TempDir Path dir) {
         assumeTrue(isDiskAnnSupported(),
-                "zvec enables DiskANN only on Linux x86_64/aarch64, macOS arm64"
-                        + " and Windows x86_64");
+                "zvec compiles DiskANN only for 64-bit Linux, macOS and Windows"
+                        + " on x86_64 or arm64");
         // Build a DiskANN-indexed collection and query it with DiskANN params.
         CollectionSchema schema = new CollectionSchema("diskann_e2e");
         try (FieldSchema vecF = new FieldSchema("vec", DataType.VECTOR_FP32, false, 4);

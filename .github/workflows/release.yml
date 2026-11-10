@@ -49,8 +49,9 @@ jobs:
           - name: darwin-x64
             # Intel macOS. Same runner and same flags upstream zvec uses for its
             # own osx-amd64 SDK (zvec/.github/workflows/_build_macos_x64_sdk.yml).
-            # Note this platform gets a reduced index set: zvec compiles DiskAnn
-            # only for Darwin/arm64, so macOS x86_64 links the DiskAnn stub.
+            # As of zvec v0.8.1 this platform no longer ships a reduced index
+            # set: DiskAnn is compiled for Darwin/x86_64 (#874) and RaBitQ for
+            # Darwin x86_64 and arm64 (#832).
             # macos-15-intel is the last x86_64 image GitHub offers for macOS and
             # is announced to retire in August 2027; this leg has to move to a
             # self-hosted Intel runner (or be dropped) before then.
@@ -96,9 +97,10 @@ jobs:
             # Native Windows on ARM, the runner upstream zvec publishes its
             # aarch64-pc-windows-msvc SDK from (zvec/_build_prebuilt.yml). The
             # image ships Maven 3.9.16, an arm64 CPython and an arm64 JDK 21.
-            # Like macOS x86_64 this platform gets a reduced index set: zvec
-            # compiles DiskAnn for Windows x86_64 only, and RaBitQ for Linux
-            # x86_64 and Windows x86_64 only, so Windows arm64 links both stubs.
+            # This platform still ships a reduced index set: zvec v0.8.1 compiles
+            # DiskAnn for Windows arm64 (#874), but RaBitQ's arm64 kernels cover
+            # Linux, Darwin, Android and iOS only (#832), so Windows arm64 links
+            # the RaBitQ stub and IVF-RaBitQ reports NotSupported there.
             runner: windows-11-arm
             platform: windows_arm64
             lib_name: zvec_c_api.dll
@@ -605,11 +607,10 @@ jobs:
           | **Windows** | \`zvec-libs-windows-x64.zip\` | x86-64 |
           | **Windows** | \`zvec-libs-windows-arm64.zip\` | ARM64 |
 
-          > **Index availability differs per platform.** zvec compiles DiskAnn only for
-          > Linux x86_64/aarch64, macOS arm64 and Windows x86_64, and IVF-RaBitQ only for
-          > Linux x86_64 and Windows x86_64. On **macOS Intel** and **Windows ARM64** both
-          > index types are stubbed out and report \`NotSupported\`; every other index
-          > (HNSW, IVF, Flat, Invert, Vamana and the quantized variants) is available.
+          > **Index availability differs per platform.** zvec compiles DiskAnn for every
+          > platform above. IVF-RaBitQ is compiled for all of them except **Windows ARM64**,
+          > where it is stubbed out and reports \`NotSupported\`; every other index (HNSW,
+          > IVF, Flat, Invert, Vamana and the quantized variants) is available everywhere.
 
           ### Maven JAR
 
